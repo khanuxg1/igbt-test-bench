@@ -1,0 +1,677 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IGBT Test Bench 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one-screen app. The 3D bench fills the left; a control rail on the right runs the test and explains each part. On phones the rail stacks under the 3D view. Single dark "workshop" look on purpose. */
+:root {
+  --bg: #13171C;
+  --scene: #171C22;
+  --panel: #1C2229;
+  --panel-2: #232B33;
+  --line: #323C46;
+  --fg: #E9E5DC;
+  --muted: #A1AAB3;
+  --accent: #F08A3E;
+  --pass: #63C27B;
+  --fail: #E85C52;
+  --warn: #F2B33D;
+  --display: 'Barlow Condensed', 'Arial Narrow', Arial, sans-serif;
+  --body: 'Barlow', 'Segoe UI', Arial, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.45 var(--body);
+  padding-block: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 368px; gap: 16px; }
+.viewport { position: relative; min-width: 0; min-height: 0; border-radius: 12px; overflow: hidden; background: var(--scene); border: 1px solid var(--line); }
+.viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.viewport canvas:active { cursor: grabbing; }
+.hint { position: absolute; left: 12px; bottom: 12px; font: 500 12px/1 var(--mono); color: var(--muted); background: rgba(19, 23, 28, 0.72); padding: 7px 9px; border-radius: 6px; pointer-events: none; }
+.tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.tag {
+  position: absolute; left: 0; top: 0; pointer-events: auto;
+  font: 600 12px/1 var(--display); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--fg); background: rgba(28, 34, 41, 0.86); border: 1px solid var(--line);
+  padding: 5px 8px; border-radius: 999px; white-space: nowrap; cursor: pointer;
+}
+.tag:hover, .tag.sel { border-color: var(--accent); color: #fff; }
+.tag.active { background: var(--accent); border-color: var(--accent); color: #1a1208; }
+.tag:focus-visible, button:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tags.off .tag { display: none; }
+.webgl-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--muted); }
+
+.panel { min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 2px; }
+.head .eyebrow { font: 600 12px/1 var(--display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+.head h1 { font: 700 34px/1.02 var(--display); letter-spacing: 0.01em; margin: 6px 0 6px; text-wrap: balance; }
+.head p { margin: 0; color: var(--muted); }
+
+.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.controls label { grid-column: 1 / -1; font: 600 12px/1 var(--display); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+select, button { font: 500 15px/1.2 var(--body); border-radius: 8px; }
+select { grid-column: 1 / -1; width: 100%; background: var(--panel-2); color: var(--fg); border: 1px solid var(--line); padding: 10px 12px; }
+button { border: 1px solid var(--line); background: var(--panel-2); color: var(--fg); padding: 11px 12px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #1a1208; font-weight: 600; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.toggle { grid-column: 1 / -1; }
+
+.status { display: grid; grid-template-columns: 6px 1fr; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 12px 12px; }
+.status .stripe { border-radius: 3px; background: var(--muted); }
+.status[data-state="running"] .stripe { background: var(--warn); }
+.status[data-state="pass"] .stripe { background: var(--pass); }
+.status[data-state="fail"] .stripe { background: var(--fail); }
+.status .state { font: 700 26px/1 var(--display); letter-spacing: 0.04em; text-transform: uppercase; }
+.status[data-state="pass"] .state { color: var(--pass); }
+.status[data-state="fail"] .state { color: var(--fail); }
+.status[data-state="running"] .state { color: var(--warn); }
+.status .msg { margin-top: 6px; color: var(--muted); }
+
+.checks { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.checks li { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+.checks li:first-child { border-top: 0; }
+.checks .num { font: 700 20px/1 var(--display); color: var(--muted); text-align: center; }
+.checks .name { font-weight: 600; }
+.checks .reading { font: 400 12.5px/1.35 var(--mono); color: var(--muted); margin-top: 2px; min-width: 0; overflow-wrap: anywhere; }
+.chip { font: 600 11px/1 var(--display); letter-spacing: 0.1em; text-transform: uppercase; padding: 5px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+li[data-s="running"] .chip { color: #1a1208; background: var(--warn); border-color: var(--warn); }
+li[data-s="pass"] .chip { color: #0f1d13; background: var(--pass); border-color: var(--pass); }
+li[data-s="fail"] .chip { color: #fff; background: var(--fail); border-color: var(--fail); }
+li[data-s="skipped"] { opacity: 0.55; }
+li[data-s="running"] .num, li[data-s="pass"] .num { color: var(--fg); }
+
+.info { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.info .k { font: 600 12px/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+.info h2 { font: 700 22px/1.1 var(--display); margin: 6px 0 6px; }
+.info p { margin: 0 0 8px; }
+.info .used { font: 400 12.5px/1.3 var(--mono); color: var(--accent); }
+.foot { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  .app { height: auto; display: flex; flex-direction: column; }
+  .viewport { height: 58vh; min-height: 320px; }
+  .panel { overflow: visible; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="app">
+  <div class="viewport" id="viewport">
+    <div class="tags" id="tags"></div>
+    <div class="hint" id="hint">Drag to rotate · scroll or pinch to zoom · click a part</div>
+  </div>
+
+  <aside class="panel">
+    <div class="head">
+      <div class="eyebrow">NU–Wabtec Hackathon ’26</div>
+      <h1>IGBT Test Bench</h1>
+      <p>Pick a case, press Run test and watch the bench check the IGBT before it goes into the locomotive.</p>
+    </div>
+
+    <div class="controls">
+      <label for="caseSel">IGBT under test</label>
+      <select id="caseSel">
+        <option value="healthy">Healthy IGBT</option>
+        <option value="gate">Damaged gate (fails check 2)</option>
+        <option value="worn">Worn chip (fails check 3)</option>
+        <option value="damaged">Internal damage (fails check 4)</option>
+        <option value="diode">Open diode (fails check 5)</option>
+        <option value="shorted">Shorted IGBT (fails check 6)</option>
+      </select>
+      <button class="primary" id="runBtn" type="button">Run test</button>
+      <button id="resetBtn" type="button">Reset</button>
+      <button class="toggle" id="tagsBtn" type="button" aria-pressed="true">Hide part labels</button>
+    </div>
+
+    <div class="status" id="status" data-state="ready" aria-live="polite">
+      <div class="stripe"></div>
+      <div>
+        <div class="state" id="stateTxt">Ready</div>
+        <div class="msg" id="msgTxt">The IGBT is clamped in the fixture. Press Run test to start.</div>
+      </div>
+    </div>
+
+    <ol class="checks" id="checks"></ol>
+
+    <div class="info" id="info">
+      <div class="k">Selected part</div>
+      <h2 id="infoName"></h2>
+      <p id="infoText"></p>
+      <div class="used" id="infoUsed"></div>
+    </div>
+
+    <p class="foot">Readings come from our Falstad simulation model, a scaled-down circuit. The animation runs much faster than the real test of about 5 minutes.</p>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var PARTS = {
+    laptop: { name: 'Laptop', text: 'Runs our test software. It picks the IGBT type, runs the checks in order, compares every reading with the datasheet limit and saves the report.', used: 'Used in: all checks' },
+    controller: { name: 'Controller (USB DAQ)', text: 'Takes orders from the laptop and switches the relays and instruments step by step.', used: 'Used in: all checks' },
+    gate: { name: 'Gate voltage source', text: 'Puts +15 V or −15 V on the gate to open or close the IGBT. For the turn-on check it raises the voltage slowly.', used: 'Used in: checks 2, 3, 4, 6' },
+    pulse: { name: 'Pulse current unit', text: 'Pushes a short burst of current through the IGBT or its diode. A few milliseconds is enough for a reading, so the part does not heat up.', used: 'Used in: checks 3, 4, 5' },
+    hv: { name: 'High-voltage source', text: 'Applies high voltage across C and E with a strict current limit and measures how much current leaks through.', used: 'Used in: check 6' },
+    dmm: { name: 'Measuring unit', text: 'A precise multimeter that reads the voltage or current for each check.', used: 'Used in: checks 2, 3, 4, 5' },
+    relay: { name: 'Relay board', text: 'Switches that connect the right instrument to the right IGBT pin for each check, so nobody touches a wire.', used: 'Used in: all checks' },
+    fixture: { name: 'IGBT in fixture', text: 'The part under test, clamped in place. Separate wires carry the current and sense the voltage, so each reading is precise.', used: 'Pins: G (gate), C (collector), E (emitter)' },
+    sensor: { name: 'Temperature sensor', text: 'IGBT readings change with temperature, so the bench records it and adjusts the limits.', used: 'Used in: checks 3, 4' },
+    door: { name: 'Safety door with interlock', text: 'The door must be closed before any check starts. If it opens during a test, the high voltage cuts off at once.', used: 'Safety' },
+    light: { name: 'Status light', text: 'Amber while testing, green for PASS, red for FAIL. Visible from across the workshop.', used: 'Status' }
+  };
+
+  var CHECKS = [
+    { n: 1, name: 'Visual check', parts: ['fixture'], cables: [], disp: {},
+      ok: 'No cracks or burn marks', bad: null, failCase: null },
+    { n: 2, name: 'Gate leakage', parts: ['gate', 'dmm', 'relay', 'fixture'], cables: ['c_gate', 'c_dmm', 'c_G', 'c_E', 'c_ctrl'],
+      disp: { gate: '+15.00 V', dmm: ['0.000 mA', '15.00 mA'] },
+      ok: 'Gate current 0 A', bad: 'Gate current 15 mA', failCase: 'gate' },
+    { n: 3, name: 'Turn-on voltage', parts: ['gate', 'pulse', 'dmm', 'relay', 'fixture', 'sensor'], cables: ['c_gate', 'c_pulse', 'c_dmm', 'c_G', 'c_C', 'c_E', 'c_sensor', 'c_ctrl'],
+      disp: { gate: '0 → 7 V', pulse: 'TEST I', dmm: ['ON @ 5.5 V', 'OFF @ 7 V'] },
+      ok: 'Turns on near 5.5 V (window 4–7 V)', bad: 'Still off at 7 V', failCase: 'worn' },
+    { n: 4, name: 'ON voltage drop', parts: ['gate', 'pulse', 'dmm', 'relay', 'fixture', 'sensor'], cables: ['c_gate', 'c_pulse', 'c_dmm', 'c_G', 'c_C', 'c_E', 'c_sensor', 'c_ctrl'],
+      disp: { gate: '+15.00 V', pulse: 'PULSE', dmm: ['0.840 V', '2.680 V'] },
+      ok: 'Voltage lost 0.84 V (limit 1.0 V)', bad: 'Voltage lost 2.68 V (limit 1.0 V)', failCase: 'damaged' },
+    { n: 5, name: 'Diode check', parts: ['pulse', 'dmm', 'relay', 'fixture'], cables: ['c_pulse', 'c_dmm', 'c_C', 'c_E', 'c_ctrl'],
+      disp: { pulse: 'DIODE I', dmm: ['0.530 V', '5.000 V'] },
+      ok: 'Diode 0.53 V (range 0.2–0.8 V)', bad: 'Diode 5 V, open inside', failCase: 'diode' },
+    { n: 6, name: 'OFF leakage', parts: ['hv', 'gate', 'relay', 'fixture'], cables: ['c_hv', 'c_gate', 'c_G', 'c_C', 'c_E', 'c_ctrl'],
+      disp: { gate: '−15.00 V', hv: ['11.8 µA', 'TRIP'] },
+      ok: 'Leakage 11.8 µA', bad: 'Leakage 1.2 A, current limit trips', failCase: 'shorted' }
+  ];
+
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------- Panel ----------
+  var checksEl = document.getElementById('checks');
+  CHECKS.forEach(function (c) {
+    var li = document.createElement('li');
+    li.setAttribute('data-s', 'waiting');
+    li.id = 'chk' + c.n;
+    li.innerHTML = '<div class="num">' + c.n + '</div><div style="min-width:0"><div class="name">' + c.name + '</div><div class="reading">—</div></div><span class="chip">Waiting</span>';
+    checksEl.appendChild(li);
+  });
+  function setRow(n, s, reading) {
+    var li = document.getElementById('chk' + n);
+    li.setAttribute('data-s', s);
+    var label = { waiting: 'Waiting', running: 'Testing', pass: 'Pass', fail: 'Fail', skipped: 'Skipped' }[s];
+    li.querySelector('.chip').textContent = label;
+    if (reading !== undefined) li.querySelector('.reading').textContent = reading;
+  }
+  var statusEl = document.getElementById('status');
+  function setStatus(state, title, msg) {
+    statusEl.setAttribute('data-state', state);
+    document.getElementById('stateTxt').textContent = title;
+    document.getElementById('msgTxt').textContent = msg;
+  }
+  var selected = 'fixture';
+  function showInfo(id) {
+    var p = PARTS[id]; if (!p) return;
+    selected = id;
+    document.getElementById('infoName').textContent = p.name;
+    document.getElementById('infoText').textContent = p.text;
+    document.getElementById('infoUsed').textContent = p.used;
+    Object.keys(tagEls).forEach(function (k) { tagEls[k].classList.toggle('sel', k === id); });
+  }
+
+  // ---------- 3D ----------
+  var root = document.getElementById('viewport');
+  var tagsEl = document.getElementById('tags');
+  var tagEls = {};
+  if (!window.THREE || !window.THREE.OrbitControls) {
+    var m = document.createElement('div'); m.className = 'webgl-msg';
+    m.textContent = 'The 3D view could not load. Check the internet connection and reload the page.';
+    root.appendChild(m); showInfo('fixture'); return;
+  }
+  var renderer;
+  try { renderer = new THREE.WebGLRenderer({ antialias: true }); }
+  catch (e) {
+    var m2 = document.createElement('div'); m2.className = 'webgl-msg';
+    m2.textContent = 'This browser cannot show 3D graphics (WebGL is off).';
+    root.appendChild(m2); showInfo('fixture'); return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  root.insertBefore(renderer.domElement, tagsEl);
+
+  var scene = new THREE.Scene();
+  scene.background = new THREE.Color('#171C22');
+  scene.fog = new THREE.Fog('#171C22', 7, 14);
+  var camera = new THREE.PerspectiveCamera(36, 1, 0.05, 60);
+  camera.position.set(1.75, 1.85, 2.35);
+  var controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(0.15, 1.12, 0.02);
+  controls.enableDamping = true;
+  controls.minDistance = 0.9;
+  controls.maxDistance = 5.5;
+  controls.maxPolarAngle = Math.PI * 0.49;
+  controls.update();
+
+  scene.add(new THREE.HemisphereLight('#e3ebf2', '#1d2329', 0.8));
+  var key = new THREE.DirectionalLight('#fff3e2', 0.95);
+  key.position.set(2.2, 4.2, 2.8); key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.camera.left = -2.2; key.shadow.camera.right = 2.2; key.shadow.camera.top = 2.2; key.shadow.camera.bottom = -2.2;
+  key.shadow.camera.near = 0.5; key.shadow.camera.far = 10; key.shadow.bias = -0.0006;
+  scene.add(key);
+  var fill = new THREE.DirectionalLight('#a8c4ff', 0.28); fill.position.set(-3, 2, -1.5); scene.add(fill);
+
+  function M(color, o) { var p = { color: color, roughness: 0.62, metalness: 0.08 }; if (o) for (var k in o) p[k] = o[k]; return new THREE.MeshStandardMaterial(p); }
+  function bx(w, h, d, mat) { var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.castShadow = true; m.receiveShadow = true; return m; }
+  function cyl(r, h, mat, seg) { var m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, seg || 20), mat); m.castShadow = true; m.receiveShadow = true; return m; }
+  var parts = {};
+  function reg(id, group, anchorLocal, glowMats) {
+    group.traverse(function (o) { if (o.isMesh) o.userData.part = id; });
+    parts[id] = { group: group, anchorLocal: anchorLocal, glow: glowMats || [] };
+  }
+
+  // Floor and bench
+  var floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), M('#11151A', { roughness: 0.95 }));
+  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+  var grid = new THREE.GridHelper(30, 60, '#252e37', '#1b2229'); grid.position.y = 0.002; scene.add(grid);
+  var TOP = 0.9;
+  var bench = new THREE.Group(); scene.add(bench);
+  var benchTop = bx(2.6, 0.05, 1.05, M('#3B4651', { roughness: 0.7 })); benchTop.position.set(0, TOP - 0.025, 0); bench.add(benchTop);
+  var mat = bx(2.5, 0.006, 0.98, M('#2C5361', { roughness: 0.9 })); mat.position.set(0, TOP + 0.003, 0); bench.add(mat);
+  [[-1.24, -0.46], [1.24, -0.46], [-1.24, 0.46], [1.24, 0.46]].forEach(function (p) {
+    var leg = bx(0.06, TOP - 0.05, 0.06, M('#59636D', { metalness: 0.5, roughness: 0.4 })); leg.position.set(p[0], (TOP - 0.05) / 2, p[1]); bench.add(leg);
+  });
+  var shelf = bx(2.5, 0.03, 0.96, M('#2F3740')); shelf.position.set(0, 0.24, 0); bench.add(shelf);
+  var T = TOP + 0.006;
+
+  // Canvas texture helper
+  function canvasTex(w, h, draw) {
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var ctx = c.getContext('2d');
+    var tex = new THREE.CanvasTexture(c); tex.encoding = THREE.sRGBEncoding; tex.anisotropy = 4;
+    var api = { c: c, ctx: ctx, tex: tex, draw: function () { draw(ctx, w, h); tex.needsUpdate = true; } };
+    api.draw(); return api;
+  }
+  var F = { disp: "'Barlow Condensed', 'Arial Narrow', Arial, sans-serif", mono: "'IBM Plex Mono', Menlo, Consolas, monospace" };
+  var textures = [];
+
+  // Instruments
+  var instruments = {};
+  function instrument(id, w, h, d, title, sub, lcd) {
+    var g = new THREE.Group();
+    var bodyMat = M('#2A3037', { roughness: 0.5, metalness: 0.25, emissive: '#000000' });
+    var body = bx(w, h, d, bodyMat); g.add(body);
+    var st = { text: '--.--', on: false, warn: false };
+    var ph = Math.round(512 * h / w);
+    var face = canvasTex(512, ph, function (ctx, W, H) {
+      ctx.fillStyle = '#20252B'; ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#C9CDD3'; ctx.font = '600 ' + Math.round(H * 0.16) + 'px ' + F.disp;
+      ctx.textBaseline = 'top'; ctx.fillText(title.toUpperCase(), W * 0.04, H * 0.09);
+      ctx.fillStyle = '#8C949C'; ctx.font = '500 ' + Math.round(H * 0.11) + 'px ' + F.disp;
+      ctx.fillText(sub, W * 0.04, H * 0.30);
+      var lx = W * 0.47, ly = H * 0.16, lw = W * 0.46, lh = H * 0.42;
+      ctx.fillStyle = st.on ? (st.warn ? '#2B1310' : '#0D1A12') : '#0E1216'; ctx.fillRect(lx, ly, lw, lh);
+      ctx.strokeStyle = '#3A434C'; ctx.lineWidth = 3; ctx.strokeRect(lx, ly, lw, lh);
+      ctx.fillStyle = st.on ? (st.warn ? '#FF6E5E' : lcd) : '#33404A';
+      ctx.font = '500 ' + Math.round(lh * 0.5) + 'px ' + F.mono; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText(st.text, lx + lw - W * 0.025, ly + lh / 2);
+      ctx.textAlign = 'left';
+      for (var i = 0; i < 4; i++) {
+        ctx.fillStyle = '#3A424B'; ctx.beginPath(); ctx.arc(W * 0.08 + i * W * 0.085, H * 0.74, H * 0.075, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.fillStyle = '#B33A2E'; ctx.beginPath(); ctx.arc(W * 0.9, H * 0.78, H * 0.07, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#1C1C1C'; ctx.beginPath(); ctx.arc(W * 0.8, H * 0.78, H * 0.07, 0, Math.PI * 2); ctx.fill();
+    });
+    textures.push(face);
+    var plane = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.98, h * 0.96), new THREE.MeshStandardMaterial({ map: face.tex, roughness: 0.55 }));
+    plane.position.z = d / 2 + 0.0015; g.add(plane);
+    instruments[id] = { group: g, face: face, st: st, w: w, h: h, d: d };
+    return { g: g, bodyMat: bodyMat };
+  }
+  function setDisplay(id, text, on, warn) {
+    var ins = instruments[id]; if (!ins) return;
+    ins.st.text = text; ins.st.on = !!on; ins.st.warn = !!warn; ins.face.draw();
+  }
+
+  // Cabinet
+  var W = 1.3, H = 0.86, D = 0.76;
+  var cab = new THREE.Group(); cab.position.set(0.35, T, 0); scene.add(cab);
+  var frameMat = M('#8E98A1', { metalness: 0.65, roughness: 0.35 });
+  var t = 0.024;
+  var base = bx(W, 0.02, D, M('#252C33')); base.position.y = 0.01; cab.add(base);
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (s) { var p = bx(t, H, t, frameMat); p.position.set(s[0] * W / 2, H / 2, s[1] * D / 2); cab.add(p); });
+  [0, H].forEach(function (y) {
+    [-1, 1].forEach(function (s) {
+      var a = bx(W, t, t, frameMat); a.position.set(0, y, s * D / 2); cab.add(a);
+      var b = bx(t, t, D, frameMat); b.position.set(s * W / 2, y, 0); cab.add(b);
+    });
+  });
+  var glass = new THREE.MeshStandardMaterial({ color: '#9fd3ff', transparent: true, opacity: 0.1, roughness: 0.08, metalness: 0, depthWrite: false, side: THREE.DoubleSide });
+  var back = new THREE.Mesh(new THREE.PlaneGeometry(W, H), glass); back.position.set(0, H / 2, -D / 2); cab.add(back);
+  var top = new THREE.Mesh(new THREE.PlaneGeometry(W, D), glass); top.rotation.x = -Math.PI / 2; top.position.set(0, H, 0); cab.add(top);
+  [-1, 1].forEach(function (s) { var side = new THREE.Mesh(new THREE.PlaneGeometry(D, H), glass); side.rotation.y = Math.PI / 2; side.position.set(s * W / 2, H / 2, 0); cab.add(side); });
+
+  // Door (hinged on the left front post)
+  var doorPivot = new THREE.Group(); doorPivot.position.set(-W / 2, 0, D / 2); cab.add(doorPivot);
+  var doorGlass = new THREE.Mesh(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ color: '#a9dcff', transparent: true, opacity: 0.14, roughness: 0.05, depthWrite: false, side: THREE.DoubleSide }));
+  doorGlass.position.set(W / 2, H / 2, 0.012); doorPivot.add(doorGlass);
+  var doorFrameMat = M('#A3ADB6', { metalness: 0.6, roughness: 0.35 });
+  [[W / 2, 0.02, W, 0.02], [W / 2, H - 0.02, W, 0.02]].forEach(function (r) { var b = bx(r[2], r[3], 0.02, doorFrameMat); b.position.set(r[0], r[1], 0.012); doorPivot.add(b); });
+  [[0.012, H / 2], [W - 0.012, H / 2]].forEach(function (r) { var b = bx(0.024, H, 0.02, doorFrameMat); b.position.set(r[0], r[1], 0.012); doorPivot.add(b); });
+  var handle = bx(0.02, 0.18, 0.03, M('#2A2F35')); handle.position.set(W - 0.07, H / 2, 0.04); doorPivot.add(handle);
+  var sign = canvasTex(256, 220, function (ctx, w, h) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#F2C230'; ctx.beginPath(); ctx.moveTo(w / 2, 8); ctx.lineTo(w - 10, 150); ctx.lineTo(10, 150); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#151515'; ctx.lineWidth = 9; ctx.stroke();
+    ctx.fillStyle = '#151515'; ctx.beginPath(); ctx.moveTo(w / 2 + 6, 46); ctx.lineTo(w / 2 - 18, 100); ctx.lineTo(w / 2 + 2, 100); ctx.lineTo(w / 2 - 8, 138); ctx.lineTo(w / 2 + 22, 84); ctx.lineTo(w / 2 + 2, 84); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#F2C230'; ctx.fillRect(10, 164, w - 20, 50);
+    ctx.fillStyle = '#151515'; ctx.font = '700 38px ' + F.disp; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('HIGH VOLTAGE', w / 2, 190);
+  });
+  textures.push(sign);
+  var signMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.1375), new THREE.MeshBasicMaterial({ map: sign.tex, transparent: true }));
+  signMesh.position.set(W * 0.8, H * 0.74, 0.03); doorPivot.add(signMesh);
+  var doorAngleOpen = -1.85, doorAngle = doorAngleOpen, doorTarget = doorAngleOpen;
+  doorPivot.rotation.y = doorAngle;
+  // Interlock on the right front post
+  var interlock = new THREE.Group(); interlock.position.set(W / 2 - 0.035, H - 0.08, D / 2 + 0.02); cab.add(interlock);
+  var ilBox = bx(0.04, 0.07, 0.035, M('#E3B52E')); interlock.add(ilBox);
+  var ilLedMat = new THREE.MeshStandardMaterial({ color: '#4a1e1b', emissive: '#E85C52', emissiveIntensity: 0.6 });
+  var ilLed = new THREE.Mesh(new THREE.SphereGeometry(0.008, 12, 12), ilLedMat); ilLed.position.set(0, 0.02, 0.019); interlock.add(ilLed);
+  var doorGroup = new THREE.Group(); doorGroup.add(doorPivot); // for raycast id only
+  reg('door', doorPivot, new THREE.Vector3(W * 0.55, H * 0.98, 0.02), [doorFrameMat]);
+  interlock.traverse(function (o) { if (o.isMesh) o.userData.part = 'door'; });
+
+  // Status light
+  var light = new THREE.Group(); light.position.set(-W / 2 + 0.08, H + 0.012, -D / 2 + 0.09); cab.add(light);
+  var pole = cyl(0.012, 0.08, M('#7D868F', { metalness: 0.6, roughness: 0.4 })); pole.position.y = 0.04; light.add(pole);
+  var lampMats = {};
+  [['green', '#3FB65E', 0.11], ['amber', '#F2A02B', 0.165], ['red', '#E2463C', 0.22]].forEach(function (L) {
+    var mt = new THREE.MeshStandardMaterial({ color: L[1], emissive: L[1], emissiveIntensity: 0.05, roughness: 0.3, transparent: true, opacity: 0.92 });
+    var c = cyl(0.032, 0.052, mt); c.position.y = L[2]; light.add(c); lampMats[L[0]] = mt;
+  });
+  var cap = cyl(0.033, 0.01, M('#2A2F35')); cap.position.y = 0.252; light.add(cap);
+  reg('light', light, new THREE.Vector3(0, 0.3, 0));
+  function setLamp(which) { ['green', 'amber', 'red'].forEach(function (k) { lampMats[k].emissiveIntensity = (k === which) ? 1.6 : 0.05; }); }
+
+  // Instruments inside the cabinet (cabinet-local coordinates)
+  var I1 = instrument('hv', 0.42, 0.19, 0.30, 'High-voltage source', 'Current-limited · leakage', '#FFB25B');
+  I1.g.position.set(-0.37, 0.02 + 0.095, -0.17); cab.add(I1.g); reg('hv', I1.g, new THREE.Vector3(0.0, 0.11, 0.15), [I1.bodyMat]);
+  var I2 = instrument('gate', 0.34, 0.12, 0.26, 'Gate voltage source', '−15 V to +15 V', '#8FF0A8');
+  I2.g.position.set(-0.37, 0.21 + 0.06, -0.18); cab.add(I2.g); reg('gate', I2.g, new THREE.Vector3(0.0, 0.075, 0.13), [I2.bodyMat]);
+  var I3 = instrument('pulse', 0.34, 0.15, 0.28, 'Pulse current unit', 'Short pulses · no heating', '#8FF0A8');
+  I3.g.position.set(0.04, 0.02 + 0.075, -0.17); cab.add(I3.g); reg('pulse', I3.g, new THREE.Vector3(0.0, 0.09, 0.14), [I3.bodyMat]);
+  var I4 = instrument('dmm', 0.30, 0.10, 0.24, 'Measuring unit', 'Precision multimeter', '#8FF0A8');
+  I4.g.position.set(0.04, 0.17 + 0.05, -0.18); cab.add(I4.g); reg('dmm', I4.g, new THREE.Vector3(0.0, 0.065, 0.12), [I4.bodyMat]);
+
+  // Relay board
+  var relay = new THREE.Group(); relay.position.set(0.43, 0.02, -0.11); cab.add(relay);
+  var pcbMat = M('#1E6A45', { roughness: 0.55, emissive: '#000000' });
+  var pcb = bx(0.26, 0.012, 0.18, pcbMat); pcb.position.y = 0.035; relay.add(pcb);
+  [[-0.11, -0.07], [0.11, -0.07], [-0.11, 0.07], [0.11, 0.07]].forEach(function (p) { var s = cyl(0.006, 0.03, M('#C9B37A', { metalness: 0.6 })); s.position.set(p[0], 0.015, p[1]); relay.add(s); });
+  var relayLeds = [];
+  for (var r = 0; r < 8; r++) {
+    var rx = -0.09 + (r % 4) * 0.06, rz = r < 4 ? -0.035 : 0.035;
+    var rl = bx(0.035, 0.03, 0.045, M('#2F5FA3', { roughness: 0.4 })); rl.position.set(rx, 0.056, rz); relay.add(rl);
+    var lm = new THREE.MeshStandardMaterial({ color: '#2a1410', emissive: '#FF5A3C', emissiveIntensity: 0.05 });
+    var led = new THREE.Mesh(new THREE.SphereGeometry(0.0055, 10, 10), lm); led.position.set(rx + 0.022, 0.046, rz + (r < 4 ? -0.026 : 0.026)); relay.add(led);
+    relayLeds.push(lm);
+  }
+  var hdr = bx(0.2, 0.015, 0.02, M('#111417')); hdr.position.set(0, 0.049, 0.08); relay.add(hdr);
+  reg('relay', relay, new THREE.Vector3(0, 0.11, 0), [pcbMat]);
+
+  // Fixture with the IGBT module
+  var fx = new THREE.Group(); fx.position.set(0.12, 0.02, 0.17); cab.add(fx);
+  var baseMat = M('#D8D1C1', { roughness: 0.8 });
+  var fbase = bx(0.32, 0.05, 0.21, baseMat); fbase.position.y = 0.025; fx.add(fbase);
+  var modMat = M('#30353B', { roughness: 0.45, emissive: '#000000' });
+  var mod = bx(0.2, 0.042, 0.12, modMat); mod.position.y = 0.071; fx.add(mod);
+  var lid = canvasTex(400, 240, function (ctx, w, h) {
+    ctx.fillStyle = '#30353B'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#E9E5DC'; ctx.font = '700 46px ' + F.disp; ctx.textBaseline = 'top'; ctx.fillText('IGBT', 18, 16);
+    ctx.fillStyle = '#A1AAB3'; ctx.font = '500 24px ' + F.disp; ctx.fillText('UNDER TEST', 18, 66);
+    ctx.fillStyle = '#E9E5DC'; ctx.font = '700 34px ' + F.disp; ctx.textAlign = 'center';
+    ctx.fillText('C', w * 0.25, h * 0.66); ctx.fillText('E', w * 0.75, h * 0.66);
+    ctx.font = '700 26px ' + F.disp; ctx.fillText('G', w * 0.93, h * 0.12);
+  });
+  textures.push(lid);
+  var lidMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.12), new THREE.MeshStandardMaterial({ map: lid.tex, roughness: 0.5 }));
+  lidMesh.rotation.x = -Math.PI / 2; lidMesh.position.y = 0.0925; fx.add(lidMesh);
+  var cu = M('#B8743A', { metalness: 0.8, roughness: 0.3 });
+  var termC = cyl(0.016, 0.022, cu); termC.position.set(-0.05, 0.103, 0.01); fx.add(termC);
+  var termE = cyl(0.016, 0.022, cu); termE.position.set(0.05, 0.103, 0.01); fx.add(termE);
+  var gold = M('#D4AF37', { metalness: 0.85, roughness: 0.3 });
+  var pinG = cyl(0.0045, 0.03, gold); pinG.position.set(0.086, 0.106, -0.045); fx.add(pinG);
+  var clampMat = M('#7A848D', { metalness: 0.6, roughness: 0.35 });
+  [-0.125, 0.125].forEach(function (x) { var c = bx(0.03, 0.02, 0.2, clampMat); c.position.set(x, 0.1, 0); fx.add(c); });
+  reg('fixture', fx, new THREE.Vector3(0, 0.17, 0), [modMat]);
+
+  // Temperature sensor touching the module
+  var sens = new THREE.Group(); sens.position.set(0.12 + 0.135, 0.02 + 0.07, 0.17 + 0.03); cab.add(sens);
+  var probe = cyl(0.006, 0.06, M('#C9CDD3', { metalness: 0.7, roughness: 0.3 })); probe.rotation.z = Math.PI / 2; sens.add(probe);
+  var sensHead = bx(0.025, 0.02, 0.02, M('#2A2F35')); sensHead.position.x = 0.04; sens.add(sensHead);
+  reg('sensor', sens, new THREE.Vector3(0.05, 0.06, 0.02));
+
+  // Controller and laptop outside the cabinet
+  var ctrl = new THREE.Group(); ctrl.position.set(-0.52, T, 0.16); scene.add(ctrl);
+  var ctrlMat = M('#3A4048', { roughness: 0.5, emissive: '#000000' });
+  var ctrlBody = bx(0.16, 0.045, 0.11, ctrlMat); ctrlBody.position.y = 0.0225; ctrl.add(ctrlBody);
+  var ctrlLabel = canvasTex(256, 64, function (ctx, w, h) { ctx.fillStyle = '#3A4048'; ctx.fillRect(0, 0, w, h); ctx.fillStyle = '#E9E5DC'; ctx.font = '600 30px ' + F.disp; ctx.textBaseline = 'middle'; ctx.fillText('USB DAQ', 14, h / 2); });
+  textures.push(ctrlLabel);
+  var cl = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 0.0375), new THREE.MeshStandardMaterial({ map: ctrlLabel.tex })); cl.rotation.x = -Math.PI / 2; cl.position.y = 0.0455; ctrl.add(cl);
+  var ctrlLedMat = new THREE.MeshStandardMaterial({ color: '#173b22', emissive: '#4BE07A', emissiveIntensity: 0.9 });
+  var ctrlLed = new THREE.Mesh(new THREE.SphereGeometry(0.006, 10, 10), ctrlLedMat); ctrlLed.position.set(0.06, 0.03, 0.056); ctrl.add(ctrlLed);
+  reg('controller', ctrl, new THREE.Vector3(0, 0.09, 0), [ctrlMat]);
+
+  var lap = new THREE.Group(); lap.position.set(-0.98, T, 0.12); lap.rotation.y = 0.38; scene.add(lap);
+  var lapBase = bx(0.38, 0.018, 0.26, M('#9AA3AC', { metalness: 0.55, roughness: 0.35 })); lapBase.position.y = 0.009; lap.add(lapBase);
+  var kb = bx(0.33, 0.002, 0.12, M('#2B3036')); kb.position.set(0, 0.019, -0.02); lap.add(kb);
+  var hinge = new THREE.Group(); hinge.position.set(0, 0.018, -0.13); hinge.rotation.x = -0.28; lap.add(hinge);
+  var lid2 = bx(0.38, 0.25, 0.012, M('#2A2F35', { metalness: 0.3, roughness: 0.4 })); lid2.position.set(0, 0.125, 0); hinge.add(lid2);
+  var screenState = { mode: 'ready', rows: CHECKS.map(function () { return 'waiting'; }), caseName: 'Healthy IGBT' };
+  var screen = canvasTex(640, 400, function (ctx, w, h) {
+    ctx.fillStyle = '#0F1317'; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#1C2229'; ctx.fillRect(0, 0, w, 54);
+    ctx.fillStyle = '#E9E5DC'; ctx.font = '700 30px ' + F.disp; ctx.textBaseline = 'middle'; ctx.fillText('IGBT TEST', 20, 28);
+    ctx.fillStyle = '#A1AAB3'; ctx.font = '500 22px ' + F.disp; ctx.textAlign = 'right'; ctx.fillText(screenState.caseName.toUpperCase(), w - 20, 28); ctx.textAlign = 'left';
+    var colors = { waiting: '#4A5560', running: '#F2B33D', pass: '#63C27B', fail: '#E85C52', skipped: '#333C45' };
+    CHECKS.forEach(function (c, i) {
+      var y = 78 + i * 38;
+      ctx.fillStyle = colors[screenState.rows[i]]; ctx.fillRect(20, y - 13, 26, 26);
+      ctx.fillStyle = screenState.rows[i] === 'skipped' ? '#56616B' : '#D5D9DE'; ctx.font = '500 24px ' + F.disp; ctx.fillText(c.n + '  ' + c.name, 60, y);
+      ctx.fillStyle = '#8C949C'; ctx.textAlign = 'right'; ctx.fillText(screenState.rows[i].toUpperCase(), 360, y); ctx.textAlign = 'left';
+    });
+    var big = { ready: ['READY', '#A1AAB3'], running: ['TESTING', '#F2B33D'], pass: ['PASS', '#63C27B'], fail: ['FAIL', '#E85C52'] }[screenState.mode];
+    ctx.fillStyle = big[1]; ctx.globalAlpha = 0.12; ctx.fillRect(390, 70, 230, 220); ctx.globalAlpha = 1;
+    ctx.strokeStyle = big[1]; ctx.lineWidth = 4; ctx.strokeRect(390, 70, 230, 220);
+    ctx.fillStyle = big[1]; ctx.font = '700 ' + (big[0].length > 5 ? 50 : 72) + 'px ' + F.disp; ctx.textAlign = 'center'; ctx.fillText(big[0], 505, 180); ctx.textAlign = 'left';
+    ctx.fillStyle = '#56616B'; ctx.font = '500 20px ' + F.mono; ctx.fillText('Report saved per serial number', 20, h - 26);
+  });
+  textures.push(screen);
+  var scr = new THREE.Mesh(new THREE.PlaneGeometry(0.35, 0.219), new THREE.MeshBasicMaterial({ map: screen.tex, toneMapped: false }));
+  scr.position.set(0, 0.125, 0.0065); hinge.add(scr);
+  reg('laptop', lap, new THREE.Vector3(0, 0.3, -0.12));
+
+  // Cables
+  scene.updateMatrixWorld(true);
+  var cables = {};
+  function wp(obj, x, y, z) { return obj.localToWorld(new THREE.Vector3(x, y, z)); }
+  function cable(id, pts, color, radius) {
+    var curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
+    var mt = new THREE.MeshStandardMaterial({ color: color, roughness: 0.45, metalness: 0.05, emissive: color, emissiveIntensity: 0 });
+    var mesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 80, radius || 0.0055, 8, false), mt);
+    mesh.castShadow = true; scene.add(mesh); cables[id] = { mesh: mesh, mat: mt };
+  }
+  var floorY = T + 0.035;
+  function route(a, b, opts) {
+    opts = opts || {};
+    var out = a.clone().add(new THREE.Vector3(0, -0.01, opts.out || 0.07));
+    var mid = a.clone().lerp(b, 0.5); mid.y = Math.max(floorY, Math.min(a.y, b.y) - (opts.sag || 0.03)); mid.z += opts.dz || 0.05;
+    var inn = b.clone().add(new THREE.Vector3(0, opts.rise || 0.05, 0));
+    return [a, out, mid, inn, b];
+  }
+  function front(id, fx_, fy_) { var ins = instruments[id]; return wp(ins.group, ins.w * fx_, ins.h * fy_, ins.d / 2 + 0.004); }
+  var rIn = function (i) { return wp(relay, -0.12, 0.05, -0.06 + i * 0.03); };
+  var rOut = function (i) { return wp(relay, -0.06 + i * 0.05, 0.05, 0.085); };
+  cable('c_gate', route(front('gate', 0.38, -0.3), rIn(0), { sag: 0.02, dz: 0.06 }), '#E8C42E');
+  cable('c_hv', route(front('hv', 0.38, -0.32), rIn(1), { sag: 0.0, dz: 0.08 }), '#E0573C', 0.0075);
+  cable('c_pulse', route(front('pulse', 0.38, -0.3), rIn(2), { sag: 0.0, dz: 0.05 }), '#C9302C', 0.0065);
+  cable('c_dmm', route(front('dmm', 0.38, -0.3), rIn(3), { sag: 0.02, dz: 0.04 }), '#3E86D6');
+  var gPin = wp(fx, 0.086, 0.12, -0.045), cT = wp(fx, -0.05, 0.115, 0.01), eT = wp(fx, 0.05, 0.115, 0.01);
+  cable('c_G', [rOut(0), rOut(0).add(new THREE.Vector3(0, 0.05, 0.03)), gPin.clone().add(new THREE.Vector3(0.02, 0.08, -0.03)), gPin], '#E8C42E', 0.0045);
+  cable('c_C', [rOut(1), rOut(1).add(new THREE.Vector3(0, 0.07, 0.04)), cT.clone().add(new THREE.Vector3(0.02, 0.12, -0.05)), cT], '#C9302C', 0.0075);
+  cable('c_E', [rOut(2), rOut(2).add(new THREE.Vector3(0, 0.06, 0.05)), eT.clone().add(new THREE.Vector3(0.01, 0.1, -0.04)), eT], '#1E2226', 0.0075);
+  var sH = wp(sens, 0.05, 0, 0);
+  cable('c_sensor', [sH, sH.clone().add(new THREE.Vector3(0.05, 0.02, -0.02)), wp(relay, 0.12, 0.06, 0.06).add(new THREE.Vector3(0.03, 0.04, 0.06)), wp(relay, 0.1, 0.05, 0.08)], '#8C949C', 0.003);
+  var cBack = wp(ctrl, 0.08, 0.025, -0.02);
+  cable('c_ctrl', [cBack, cBack.clone().add(new THREE.Vector3(0.08, -0.015, -0.05)), wp(cab, -W / 2, 0.04, -0.06), wp(cab, -0.1, 0.035, 0.03), wp(relay, 0, 0.05, -0.1).add(new THREE.Vector3(0, 0.03, -0.02)), wp(relay, 0, 0.05, -0.09)], '#5B6670', 0.006);
+  var lapPort = wp(lap, 0.19, 0.01, 0.02), cFront = wp(ctrl, -0.08, 0.02, 0);
+  cable('c_usb', [lapPort, lapPort.clone().add(new THREE.Vector3(0.06, -0.006, 0.02)), cFront.clone().add(new THREE.Vector3(-0.08, -0.012, 0.01)), cFront], '#5B6670', 0.004);
+
+  // Labels
+  var tagOrder = ['laptop', 'controller', 'gate', 'hv', 'pulse', 'dmm', 'relay', 'fixture', 'sensor', 'door', 'light'];
+  tagOrder.forEach(function (id) {
+    var b = document.createElement('button'); b.type = 'button'; b.className = 'tag'; b.textContent = PARTS[id].name.replace(' (USB DAQ)', '');
+    b.addEventListener('click', function () { showInfo(id); });
+    tagsEl.appendChild(b); tagEls[id] = b;
+  });
+  var tagsOn = true;
+  var tagsBtn = document.getElementById('tagsBtn');
+  function applyTags() { tagsEl.classList.toggle('off', !tagsOn); tagsBtn.textContent = tagsOn ? 'Hide part labels' : 'Show part labels'; tagsBtn.setAttribute('aria-pressed', tagsOn ? 'true' : 'false'); }
+  tagsBtn.addEventListener('click', function () { tagsOn = !tagsOn; applyTags(); });
+  if ((window.innerWidth || 1024) < 520) tagsOn = false;
+  applyTags();
+
+  // Picking
+  var ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), downAt = null;
+  renderer.domElement.addEventListener('pointerdown', function (e) { downAt = [e.clientX, e.clientY]; });
+  renderer.domElement.addEventListener('pointerup', function (e) {
+    if (!downAt) return; var dx = e.clientX - downAt[0], dy = e.clientY - downAt[1]; downAt = null;
+    if (dx * dx + dy * dy > 25) return;
+    var rect = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    var hits = ray.intersectObjects(scene.children, true);
+    for (var i = 0; i < hits.length; i++) { var id = hits[i].object.userData.part; if (id) { showInfo(id); return; } }
+  });
+
+  // Sizing
+  function resize() {
+    var w = root.clientWidth, h = root.clientHeight; if (!w || !h) return;
+    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(root); else window.addEventListener('resize', resize);
+  resize();
+
+  // Highlight state
+  var activeParts = [], activeCables = [];
+  function setActive(pIds, cIds) {
+    activeParts = pIds || []; activeCables = cIds || [];
+    Object.keys(tagEls).forEach(function (k) { tagEls[k].classList.toggle('active', activeParts.indexOf(k) >= 0); });
+  }
+  function relayPattern(n) { relayLeds.forEach(function (m, i) { m.emissiveIntensity = n ? (((i * 7 + n * 3) % 5) < 2 ? 1.8 : 0.05) : 0.05; }); }
+
+  // Animation loop
+  var v = new THREE.Vector3(), clock = new THREE.Clock();
+  function tick() {
+    var dt = Math.min(clock.getDelta(), 0.05), time = clock.elapsedTime;
+    controls.update();
+    var k = reduce ? 1 : Math.min(1, dt * 4);
+    doorAngle += (doorTarget - doorAngle) * k; doorPivot.rotation.y = doorAngle;
+    var pulse = reduce ? 0.7 : 0.45 + 0.35 * Math.sin(time * 6);
+    Object.keys(parts).forEach(function (id) {
+      var on = activeParts.indexOf(id) >= 0, sel = id === selected && activeParts.length === 0;
+      parts[id].glow.forEach(function (m) {
+        if (!m.emissive) return;
+        if (on) { m.emissive.set('#F08A3E'); m.emissiveIntensity = pulse * 0.55; }
+        else if (sel) { m.emissive.set('#F08A3E'); m.emissiveIntensity = 0.12; }
+        else { m.emissiveIntensity = 0; }
+      });
+    });
+    Object.keys(cables).forEach(function (id) { cables[id].mat.emissiveIntensity = activeCables.indexOf(id) >= 0 ? (0.6 + pulse) : 0; });
+    renderer.render(scene, camera);
+    var w = root.clientWidth, h = root.clientHeight;
+    tagOrder.forEach(function (id) {
+      var p = parts[id]; var el = tagEls[id];
+      v.copy(p.anchorLocal); p.group.localToWorld(v); v.project(camera);
+      if (v.z > 1 || v.x < -1.1 || v.x > 1.1 || v.y < -1.1 || v.y > 1.1) { el.style.visibility = 'hidden'; return; }
+      el.style.visibility = 'visible';
+      el.style.transform = 'translate(' + ((v.x + 1) / 2 * w).toFixed(1) + 'px,' + ((1 - v.y) / 2 * h).toFixed(1) + 'px) translate(-50%, -100%)';
+    });
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+
+  // Test sequence
+  var runBtn = document.getElementById('runBtn'), resetBtn = document.getElementById('resetBtn'), caseSel = document.getElementById('caseSel');
+  var running = false, runId = 0;
+  function sleep(ms) { return new Promise(function (res) { setTimeout(res, reduce ? Math.min(ms, 350) : ms); }); }
+  function resetAll() {
+    runId++; running = false; runBtn.disabled = false; caseSel.disabled = false;
+    CHECKS.forEach(function (c, i) { setRow(c.n, 'waiting', '—'); screenState.rows[i] = 'waiting'; });
+    screenState.mode = 'ready'; screenState.caseName = caseSel.options[caseSel.selectedIndex].text.replace(/ \(.*\)/, ''); screen.draw();
+    ['hv', 'gate', 'pulse', 'dmm'].forEach(function (id) { setDisplay(id, '--.--', false); });
+    setActive([], []); relayPattern(0); setLamp(null);
+    doorTarget = doorAngleOpen; ilLedMat.emissive.set('#E85C52');
+    setStatus('ready', 'Ready', 'The IGBT is clamped in the fixture. Press Run test to start.');
+  }
+  async function run() {
+    if (running) return;
+    resetAll(); var my = ++runId; running = true; runBtn.disabled = true; caseSel.disabled = true;
+    var fault = caseSel.value;
+    setStatus('running', 'Testing', 'Closing the safety door. The interlock must confirm before any voltage is applied.');
+    doorTarget = 0; await sleep(1100); if (my !== runId) return;
+    ilLedMat.emissive.set('#4BE07A'); setLamp('amber'); screenState.mode = 'running'; screen.draw();
+    for (var i = 0; i < CHECKS.length; i++) {
+      var c = CHECKS[i];
+      setRow(c.n, 'running', 'Measuring…'); screenState.rows[i] = 'running'; screen.draw();
+      setStatus('running', 'Testing', 'Check ' + c.n + ' of 6: ' + c.name + '.');
+      setActive(c.parts, c.cables); relayPattern(c.n);
+      var failsHere = c.failCase === fault;
+      Object.keys(c.disp).forEach(function (id) { var d = c.disp[id]; if (typeof d === 'string') setDisplay(id, d, true, false); else setDisplay(id, '…', true, false); });
+      await sleep(c.n === 1 ? 700 : 1300); if (my !== runId) return;
+      Object.keys(c.disp).forEach(function (id) { var d = c.disp[id]; if (typeof d !== 'string') setDisplay(id, failsHere ? d[1] : d[0], true, failsHere); });
+      if (failsHere) {
+        setRow(c.n, 'fail', c.bad); screenState.rows[i] = 'fail';
+        for (var j = i + 1; j < CHECKS.length; j++) { setRow(CHECKS[j].n, 'skipped', 'Not run'); screenState.rows[j] = 'skipped'; }
+        screenState.mode = 'fail'; screen.draw(); setLamp('red');
+        await sleep(500); if (my !== runId) return;
+        setActive([], []); relayPattern(0);
+        setStatus('fail', 'FAIL', 'Failed check ' + c.n + ' (' + c.name.toLowerCase() + '). Remaining checks skipped' + (c.n < 6 ? ', so high voltage was never applied.' : '.') + ' Send the IGBT to repair.');
+        doorTarget = doorAngleOpen; ilLedMat.emissive.set('#E85C52');
+        running = false; runBtn.disabled = false; caseSel.disabled = false; return;
+      }
+      setRow(c.n, 'pass', c.ok); screenState.rows[i] = 'pass'; screen.draw();
+      await sleep(250); if (my !== runId) return;
+    }
+    setActive([], []); relayPattern(0); setLamp('green'); screenState.mode = 'pass'; screen.draw();
+    ['hv', 'gate', 'pulse'].forEach(function (id) { setDisplay(id, '0.00', false); });
+    setStatus('pass', 'PASS', 'All six checks passed. Label the IGBT for installation; the report is saved.');
+    doorTarget = doorAngleOpen; ilLedMat.emissive.set('#E85C52');
+    running = false; runBtn.disabled = false; caseSel.disabled = false;
+  }
+  runBtn.addEventListener('click', run);
+  resetBtn.addEventListener('click', resetAll);
+  caseSel.addEventListener('change', resetAll);
+
+  resetAll();
+  showInfo('fixture');
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(function () { textures.forEach(function (t) { t.draw(); }); });
+})();
+</script>
+
+</html>
